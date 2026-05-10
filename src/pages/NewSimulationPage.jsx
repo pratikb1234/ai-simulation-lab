@@ -1,13 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
-import { Check, Settings2, Users, Target, BookOpen } from 'lucide-react';
+import { Check, Users, Target, BookOpen, Key, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { generateSimulation } from '../lib/gemini';
 
 export default function NewSimulationPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState(null);
+  const [apiKey, setApiKey] = useState('');
+  
   const [formData, setFormData] = useState({
     topic: '',
     panel: '',
@@ -15,9 +20,35 @@ export default function NewSimulationPage() {
     scale: ''
   });
 
+  useEffect(() => {
+    const savedKey = localStorage.getItem('GEMINI_API_KEY') || import.meta.env.VITE_GEMINI_API_KEY;
+    if (savedKey) setApiKey(savedKey);
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!apiKey) {
+      setError("Please provide a Gemini API key.");
+      return;
+    }
+    
+    localStorage.setItem('GEMINI_API_KEY', apiKey);
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const results = await generateSimulation(formData.topic, formData.panel, formData.context, formData.scale, apiKey);
+      // Navigate to results page and pass the data via state
+      navigate('/simulation/new', { state: { simulationData: results, formData } });
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Failed to generate simulation.");
+      setIsGenerating(false);
+    }
+  };
+
   const handleNext = () => {
-    if (step < 4) setStep(step + 1);
-    else navigate('/simulation/new'); // Redirects to results mock
+    if (step < 5) setStep(step + 1);
+    else handleGenerate();
   };
 
   return (
@@ -33,10 +64,12 @@ export default function NewSimulationPage() {
             <span className={step >= 3 ? 'text-primary' : ''}>3. Context</span>
             <span className="text-border">/</span>
             <span className={step >= 4 ? 'text-primary' : ''}>4. Scale</span>
+            <span className="text-border">/</span>
+            <span className={step >= 5 ? 'text-primary' : ''}>5. Generate</span>
           </div>
         </div>
-        <Button onClick={handleNext} disabled={step === 1 && !formData.topic}>
-          {step === 4 ? 'Generate Simulation' : 'Next Step'}
+        <Button onClick={handleNext} disabled={(step === 1 && !formData.topic) || isGenerating}>
+          {isGenerating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : (step === 5 ? 'Run Simulation' : 'Next Step')}
         </Button>
       </header>
 
@@ -54,7 +87,7 @@ export default function NewSimulationPage() {
                 <p className="text-muted-foreground">Enter a policy, feature, or educational decision.</p>
               </div>
               <textarea
-                className="w-full min-h-[150px] p-4 text-lg border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white resize-none"
+                className="w-full min-h-[150px] p-4 text-lg border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white resize-none shadow-sm"
                 placeholder="e.g., Should we introduce AI tools in Grade 5?"
                 value={formData.topic}
                 onChange={(e) => setFormData({ ...formData, topic: e.target.value })}
@@ -134,10 +167,10 @@ export default function NewSimulationPage() {
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 {[
-                  { id: '10', title: '10 Personas', desc: 'Quick pulse check. Takes ~30s.' },
-                  { id: '25', title: '25 Personas', desc: 'Standard insight. Takes ~1m.' },
-                  { id: '50', title: '50 Personas', desc: 'Deep analysis. Takes ~2m.' },
-                  { id: '100', title: '100 Personas', desc: 'Enterprise stress test. Takes ~5m.' },
+                  { id: '10', title: '10 Personas', desc: 'Quick pulse check. Takes ~5s.' },
+                  { id: '25', title: '25 Personas', desc: 'Standard insight. Takes ~10s.' },
+                  { id: '50', title: '50 Personas', desc: 'Deep analysis. Takes ~15s.' },
+                  { id: '100', title: '100 Personas', desc: 'Enterprise stress test. Takes ~20s.' },
                 ].map((option) => (
                   <SelectionCard
                     key={option.id}
@@ -150,6 +183,43 @@ export default function NewSimulationPage() {
               </div>
             </div>
           )}
+
+          {step === 5 && (
+            <div className="space-y-6">
+              <div>
+                <h1 className="text-3xl font-bold tracking-tight mb-2">API Configuration</h1>
+                <p className="text-muted-foreground">This platform uses Google Gemini 2.5 Flash to generate live simulations.</p>
+              </div>
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex items-center gap-2 text-primary font-medium">
+                    <Key className="w-5 h-5" /> Gemini API Key
+                  </div>
+                  <input
+                    type="password"
+                    className="w-full p-3 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white"
+                    placeholder="AIzaSy..."
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Your key is stored locally in your browser's localStorage and is only sent directly to Google's API.
+                  </p>
+                  {error && (
+                    <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
+                      {error}
+                    </div>
+                  )}
+                  {isGenerating && (
+                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-center gap-3">
+                      <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                      <span className="text-sm font-medium text-blue-900">Synthesizing personas and analyzing responses...</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </motion.div>
       </main>
     </div>
@@ -159,7 +229,7 @@ export default function NewSimulationPage() {
 function SelectionCard({ title, description, icon, selected, onClick }) {
   return (
     <Card 
-      className={`cursor-pointer transition-all ${selected ? 'border-primary ring-1 ring-primary' : 'hover:border-primary/30'}`}
+      className={`cursor-pointer transition-all ${selected ? 'border-primary ring-1 ring-primary shadow-md' : 'hover:border-primary/30'}`}
       onClick={onClick}
     >
       <CardContent className="p-6 flex items-start gap-4">
