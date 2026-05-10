@@ -4,7 +4,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Check, Users, Target, BookOpen, Key, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { generateBaseSimulationContext, generateIndividualPersonaReaction } from '../lib/gemini';
+import { generateBaseSimulationContext, generateBulkPersonaReactions } from '../lib/gemini';
 
 export default function NewSimulationPage() {
   const navigate = useNavigate();
@@ -41,19 +41,11 @@ export default function NewSimulationPage() {
       const baseData = await generateBaseSimulationContext(formData.topic, formData.panel, formData.context, parseInt(formData.scale), apiKey);
       
       const profilesToGenerate = baseData.personaProfilesToGenerate || [];
-      const populatedPersonas = [];
       
-      // Process in small batches of 5 to avoid 429 Too Many Requests
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < profilesToGenerate.length; i += BATCH_SIZE) {
-        const batch = profilesToGenerate.slice(i, i + BATCH_SIZE);
-        setGenerationProgress(`Querying Gemini for individual reactions: ${i} to ${Math.min(i + BATCH_SIZE, profilesToGenerate.length)} of ${profilesToGenerate.length}...`);
-        
-        const batchResults = await Promise.all(
-          batch.map(profile => generateIndividualPersonaReaction(formData.topic, formData.context, profile, apiKey))
-        );
-        populatedPersonas.push(...batchResults);
-      }
+      setGenerationProgress(`Generating deep psychological profiles for all ${profilesToGenerate.length} personas...`);
+      
+      // Send all personas in one bulk query to prevent hitting the 5 RPM free tier limit
+      const populatedPersonas = await generateBulkPersonaReactions(formData.topic, formData.context, profilesToGenerate, apiKey);
 
       baseData.personas = populatedPersonas;
       delete baseData.personaProfilesToGenerate;
@@ -62,7 +54,7 @@ export default function NewSimulationPage() {
       navigate('/simulation/new', { state: { simulationData: baseData, formData } });
     } catch (err) {
       console.error(err);
-      setError(err.message || "Failed to generate simulation. If you hit a rate limit, try generating 10 personas instead.");
+      setError(err.message || "Failed to generate simulation.");
       setIsGenerating(false);
     }
   };
@@ -184,14 +176,14 @@ export default function NewSimulationPage() {
             <div className="space-y-6">
               <div>
                 <h1 className="text-3xl font-bold tracking-tight mb-2">Select Simulation Scale</h1>
-                <p className="text-muted-foreground">Note: Because we send a unique prompt to Gemini for each persona, large scales take longer and may hit free API rate limits.</p>
+                <p className="text-muted-foreground">Smart-batching allows us to bypass standard API rate limits.</p>
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 {[
-                  { id: '10', title: '10 Personas', desc: 'Recommended. Takes ~10s.' },
-                  { id: '25', title: '25 Personas', desc: 'Standard insight. Takes ~25s.' },
-                  { id: '50', title: '50 Personas', desc: 'Takes ~1 minute. Risk of rate limit.' },
-                  { id: '100', title: '100 Personas', desc: 'Enterprise API key required.' },
+                  { id: '10', title: '10 Personas', desc: 'Recommended. Takes ~8s.' },
+                  { id: '25', title: '25 Personas', desc: 'Standard insight. Takes ~12s.' },
+                  { id: '50', title: '50 Personas', desc: 'Takes ~20s.' },
+                  { id: '100', title: '100 Personas', desc: 'Enterprise analysis. Takes ~30s.' },
                 ].map((option) => (
                   <SelectionCard
                     key={option.id}
