@@ -1,12 +1,9 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
-export async function generateSimulation(topic, panel, context, scale, apiKey) {
-  if (!apiKey) {
-    throw new Error("Gemini API key is required. Please set it in .env or provide it.");
-  }
-
+export async function generateBaseSimulationContext(topic, panel, context, scale, apiKey) {
+  if (!apiKey) throw new Error("Gemini API key is required.");
+  
   const genAI = new GoogleGenerativeAI(apiKey);
-  // We use gemini-2.5-flash for speed and cost-effectiveness in structured outputs
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     generationConfig: {
@@ -14,95 +11,98 @@ export async function generateSimulation(topic, panel, context, scale, apiKey) {
       responseSchema: {
         type: SchemaType.OBJECT,
         properties: {
-          overallSentimentScore: { type: SchemaType.NUMBER, description: "Score from 0 to 100" },
-          sentimentLabel: { type: SchemaType.STRING, description: "e.g., Cautiously Optimistic, Strongly Opposed" },
+          overallSentimentScore: { type: SchemaType.NUMBER },
+          sentimentLabel: { type: SchemaType.STRING },
           topRisk: { type: SchemaType.STRING },
           strongestSupporter: { type: SchemaType.STRING },
           hiddenRisks: {
             type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.OBJECT,
-              properties: {
-                title: { type: SchemaType.STRING },
-                description: { type: SchemaType.STRING }
-              }
-            }
+            items: { type: SchemaType.OBJECT, properties: { title: { type: SchemaType.STRING }, description: { type: SchemaType.STRING } } }
           },
           recommendedStrategy: {
             type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.OBJECT,
-              properties: {
-                title: { type: SchemaType.STRING },
-                description: { type: SchemaType.STRING }
-              }
-            }
+            items: { type: SchemaType.OBJECT, properties: { title: { type: SchemaType.STRING }, description: { type: SchemaType.STRING } } }
           },
           sentimentData: {
             type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.OBJECT,
-              properties: {
-                name: { type: SchemaType.STRING, description: "e.g., Strongly Support, Support, Neutral, Concerned, Strongly Oppose" },
-                value: { type: SchemaType.NUMBER }
-              }
-            }
+            items: { type: SchemaType.OBJECT, properties: { name: { type: SchemaType.STRING }, value: { type: SchemaType.NUMBER } } }
           },
           agreementData: {
             type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.OBJECT,
-              properties: {
-                subject: { type: SchemaType.STRING },
-                A: { type: SchemaType.NUMBER, description: "Score out of 100" },
-                fullMark: { type: SchemaType.NUMBER, description: "Always 100" }
-              }
-            }
+            items: { type: SchemaType.OBJECT, properties: { subject: { type: SchemaType.STRING }, A: { type: SchemaType.NUMBER }, fullMark: { type: SchemaType.NUMBER } } }
           },
           concernsData: {
             type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.OBJECT,
-              properties: {
-                name: { type: SchemaType.STRING },
-                count: { type: SchemaType.NUMBER }
-              }
-            }
+            items: { type: SchemaType.OBJECT, properties: { name: { type: SchemaType.STRING }, count: { type: SchemaType.NUMBER } } }
           },
-          personas: {
+          personaProfilesToGenerate: {
             type: SchemaType.ARRAY,
+            description: `Generate exactly ${scale} persona outlines based on the panel.`,
             items: {
               type: SchemaType.OBJECT,
               properties: {
                 id: { type: SchemaType.NUMBER },
                 name: { type: SchemaType.STRING },
-                role: { type: SchemaType.STRING },
-                sentiment: { type: SchemaType.STRING },
-                quote: { type: SchemaType.STRING }
+                role: { type: SchemaType.STRING }
               }
             }
           }
         },
-        required: ["overallSentimentScore", "sentimentLabel", "topRisk", "strongestSupporter", "hiddenRisks", "recommendedStrategy", "sentimentData", "agreementData", "concernsData", "personas"]
+        required: ["overallSentimentScore", "sentimentLabel", "topRisk", "strongestSupporter", "hiddenRisks", "recommendedStrategy", "sentimentData", "agreementData", "concernsData", "personaProfilesToGenerate"]
       }
     }
   });
 
   const prompt = `
-    You are the backend engine for a 'Parent + Teacher + Student Simulation Lab'.
-    The user wants to stress-test an educational decision.
-    Topic/Decision: "${topic}"
-    Target Panel: "${panel}"
-    School Context: "${context}"
-    Simulation Scale: "${scale}"
+    You are the orchestration engine for an educational decision simulation.
+    Topic: "${topic}"
+    Panel: "${panel}"
+    Context: "${context}"
+    Scale: ${scale} personas total.
     
-    Based on the parameters above, generate a highly realistic, psychologically nuanced simulation response. 
-    Ensure the data makes sense (e.g. if the context is IB, use IB terminology like PYP, MYP, DP). 
-    Generate exactly ${scale} personas if possible, but for the sake of response length, generate a representative sample of 5 highly detailed personas.
-    Ensure 'sentimentData' values sum up to 100.
+    Generate the overall dashboard data (sentiment distributions, charts, risks).
+    CRITICAL: Generate exactly ${scale} 'personaProfilesToGenerate' (names and roles only).
   `;
 
   const result = await model.generateContent(prompt);
-  const responseText = result.response.text();
-  return JSON.parse(responseText);
+  return JSON.parse(result.response.text());
+}
+
+export async function generateIndividualPersonaReaction(topic, context, personaOutline, apiKey) {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+          sentiment: { type: SchemaType.STRING, description: "Support, Concerned, Neutral, Strongly Support, Strongly Oppose" },
+          quote: { type: SchemaType.STRING, description: "A realistic 1-2 sentence first-person reaction to the topic." }
+        },
+        required: ["sentiment", "quote"]
+      }
+    }
+  });
+
+  const prompt = `
+    Act as this specific stakeholder in a ${context} school context:
+    Name: ${personaOutline.name}
+    Role: ${personaOutline.role}
+    
+    The school is proposing the following decision/policy: "${topic}".
+    
+    How do you react? Provide your sentiment classification and a realistic first-person quote.
+  `;
+
+  // Adding a slight delay to help prevent rate-limiting on the free tier when batching
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const result = await model.generateContent(prompt);
+  const data = JSON.parse(result.response.text());
+  
+  return {
+    ...personaOutline,
+    sentiment: data.sentiment,
+    quote: data.quote
+  };
 }

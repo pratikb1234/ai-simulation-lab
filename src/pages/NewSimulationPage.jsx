@@ -4,12 +4,13 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Check, Users, Target, BookOpen, Key, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { generateSimulation } from '../lib/gemini';
+import { generateBaseSimulationContext, generateIndividualPersonaReaction } from '../lib/gemini';
 
 export default function NewSimulationPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState("");
   const [error, setError] = useState(null);
   const [apiKey, setApiKey] = useState('');
   
@@ -17,7 +18,7 @@ export default function NewSimulationPage() {
     topic: '',
     panel: '',
     context: '',
-    scale: ''
+    scale: '10'
   });
 
   useEffect(() => {
@@ -36,12 +37,32 @@ export default function NewSimulationPage() {
     setError(null);
 
     try {
-      const results = await generateSimulation(formData.topic, formData.panel, formData.context, formData.scale, apiKey);
+      setGenerationProgress("Synthesizing dashboard analytics and mapping personas...");
+      const baseData = await generateBaseSimulationContext(formData.topic, formData.panel, formData.context, parseInt(formData.scale), apiKey);
+      
+      const profilesToGenerate = baseData.personaProfilesToGenerate || [];
+      const populatedPersonas = [];
+      
+      // Process in small batches of 5 to avoid 429 Too Many Requests
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < profilesToGenerate.length; i += BATCH_SIZE) {
+        const batch = profilesToGenerate.slice(i, i + BATCH_SIZE);
+        setGenerationProgress(`Querying Gemini for individual reactions: ${i} to ${Math.min(i + BATCH_SIZE, profilesToGenerate.length)} of ${profilesToGenerate.length}...`);
+        
+        const batchResults = await Promise.all(
+          batch.map(profile => generateIndividualPersonaReaction(formData.topic, formData.context, profile, apiKey))
+        );
+        populatedPersonas.push(...batchResults);
+      }
+
+      baseData.personas = populatedPersonas;
+      delete baseData.personaProfilesToGenerate;
+
       // Navigate to results page and pass the data via state
-      navigate('/simulation/new', { state: { simulationData: results, formData } });
+      navigate('/simulation/new', { state: { simulationData: baseData, formData } });
     } catch (err) {
       console.error(err);
-      setError(err.message || "Failed to generate simulation.");
+      setError(err.message || "Failed to generate simulation. If you hit a rate limit, try generating 10 personas instead.");
       setIsGenerating(false);
     }
   };
@@ -56,7 +77,7 @@ export default function NewSimulationPage() {
       <header className="bg-white border-b border-border/40 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-4">
           <Button variant="ghost" onClick={() => navigate('/dashboard')}>Cancel</Button>
-          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground hidden md:flex">
             <span className={step >= 1 ? 'text-primary' : ''}>1. Topic</span>
             <span className="text-border">/</span>
             <span className={step >= 2 ? 'text-primary' : ''}>2. Panel</span>
@@ -69,7 +90,7 @@ export default function NewSimulationPage() {
           </div>
         </div>
         <Button onClick={handleNext} disabled={(step === 1 && !formData.topic) || isGenerating}>
-          {isGenerating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : (step === 5 ? 'Run Simulation' : 'Next Step')}
+          {isGenerating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Working...</> : (step === 5 ? 'Run Simulation' : 'Next Step')}
         </Button>
       </header>
 
@@ -163,14 +184,14 @@ export default function NewSimulationPage() {
             <div className="space-y-6">
               <div>
                 <h1 className="text-3xl font-bold tracking-tight mb-2">Select Simulation Scale</h1>
-                <p className="text-muted-foreground">How many synthetic personas should we generate?</p>
+                <p className="text-muted-foreground">Note: Because we send a unique prompt to Gemini for each persona, large scales take longer and may hit free API rate limits.</p>
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 {[
-                  { id: '10', title: '10 Personas', desc: 'Quick pulse check. Takes ~5s.' },
-                  { id: '25', title: '25 Personas', desc: 'Standard insight. Takes ~10s.' },
-                  { id: '50', title: '50 Personas', desc: 'Deep analysis. Takes ~15s.' },
-                  { id: '100', title: '100 Personas', desc: 'Enterprise stress test. Takes ~20s.' },
+                  { id: '10', title: '10 Personas', desc: 'Recommended. Takes ~10s.' },
+                  { id: '25', title: '25 Personas', desc: 'Standard insight. Takes ~25s.' },
+                  { id: '50', title: '50 Personas', desc: 'Takes ~1 minute. Risk of rate limit.' },
+                  { id: '100', title: '100 Personas', desc: 'Enterprise API key required.' },
                 ].map((option) => (
                   <SelectionCard
                     key={option.id}
@@ -211,9 +232,9 @@ export default function NewSimulationPage() {
                     </div>
                   )}
                   {isGenerating && (
-                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-center gap-3">
-                      <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
-                      <span className="text-sm font-medium text-blue-900">Synthesizing personas and analyzing responses...</span>
+                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg flex flex-col items-center justify-center gap-3 text-center">
+                      <Loader2 className="w-6 h-6 text-blue-600 animate-spin mb-1" />
+                      <span className="text-sm font-medium text-blue-900">{generationProgress}</span>
                     </div>
                   )}
                 </CardContent>
